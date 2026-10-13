@@ -1,0 +1,13 @@
+build/
+.cache/
+compile_commands.json
+*.o
+*.a
+.vscode/
+.idea/
+
+data/
+
+# 个人工作文档
+PLAN.md
+DESIGN_LOG.md
