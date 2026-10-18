@@ -1,6 +1,5 @@
 #pragma once
 
-
 #include "vortex/config.hpp"
 #include "vortex/distance.hpp"
 #include "vortex/errors.hpp"

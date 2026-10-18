@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <functional>
 
-namespace vortex 
+namespace vortex
 {
-    //业务筛选
+    // 业务筛选
     using IdFilter = std::function<bool(std::int64_t)>;
 }

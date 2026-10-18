@@ -1,0 +1,1 @@
+{"dataset": "data/siftsmall", "method": "bruteforce", "metric": "L2", "k": 10, "queries": 100, "reps": 20, "recall_at_k": 1.0000, "qps": 145.1, "avg_latency_ms": 6.890, "groundtruth_mismatches": 0}
