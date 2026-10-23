@@ -1,0 +1,2 @@
+{"time":"2026-10-20 20:05:44","method":"bruteforce","threads":1,"recall_at_k":1.0000,"qps":862.9,"avg_latency_ms":1.159,"build_seconds":0.0}
+{"time":"2026-10-20 20:22:10","method":"hnsw","threads":1,"recall_at_k":0.9990,"qps":3981.0,"avg_latency_ms":0.251,"build_seconds":9.1}

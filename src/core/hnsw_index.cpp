@@ -76,22 +76,21 @@ namespace vortex
         return hits;
     }
 
-    std::int64_t insertNode(GraphStore& store, DistanceMetric metric,
-                            const float* vec, std::size_t level,
-                            std::size_t efConstruction, SelectStrategy strategy)
+    InsertPlan planInsertNode(const GraphStore& store, DistanceMetric metric,
+                              const float* vec, std::size_t level,
+                              std::size_t efConstruction)
     {
         if (vec == nullptr) throw ValueError("vec must not be null");
-        const std::size_t dims = store.dims();
-        const std::int64_t oldEntry = store.entryPoint();
-        const std::size_t oldMaxLevel = store.maxLevel();
-        
-        const PairDistance pairDist = [&](std::int64_t a, std::int64_t b)
-        {
-            return evalDistance(metric, store.vector(a), store.vector(b), dims);
-        };
+        InsertPlan plan;
+        plan.level = level;
 
-        const std::int64_t q = store.addNode(vec, level);
-        if (oldEntry == -1) return q;  // 插前是空图
+        const std::int64_t oldEntry = store.entryPoint();
+        if (oldEntry == -1)  // 搜索时图是空的
+        {
+            plan.emptyGraph = true;
+            return plan;
+        }
+        const std::size_t oldMaxLevel = store.maxLevel();
 
         std::int64_t ep = oldEntry;
         // 高层下降（ef=1），从旧 maxLevel 到 level+1
@@ -100,36 +99,72 @@ namespace vortex
             ep = searchLayer(store, metric, vec, ep, 1, lc)[0].id;
         }
 
-        // 低层搜索，从 level 到 0
+        // 低层搜索，从 level 到 0，每层结果记进计划书
         const std::size_t top = std::min(level, oldMaxLevel);
+        plan.found.resize(top + 1);
         for (std::size_t lc = top;; lc--)
         {
-            const auto found = searchLayer(store, metric, vec, ep, efConstruction, lc);
+            plan.found[lc] = searchLayer(store, metric, vec, ep, efConstruction, lc);
+            if (lc == 0) break;
+
+            ep = plan.found[lc].empty() ? ep : plan.found[lc][0].id;
+        }
+        return plan;
+    }
+
+    std::int64_t applyInsertNode(GraphStore& store, DistanceMetric metric,
+                                 const float* vec, const InsertPlan& plan,
+                                 SelectStrategy strategy)
+    {
+        const std::size_t dims = store.dims();
+
+        const PairDistance pairDist = [&](std::int64_t a, std::int64_t b)
+        {
+            return evalDistance(metric, store.vector(a), store.vector(b), dims);
+        };
+
+        const std::int64_t q = store.addNode(vec, plan.level);
+        if (plan.emptyGraph) return q;
+
+        for (std::size_t lc = plan.found.size(); lc-- > 0;)
+        {
             const std::size_t cap = store.neighborCapacity(lc);
-            const auto picked = selectNeighbors(found, cap, strategy, pairDist);
+            const auto picked = selectNeighbors(plan.found[lc], cap, strategy, pairDist);
             for (const KnnHit& h : picked)
             {
-                store.neighbors(q, lc).push_back(h.id);
-                auto& theirs = store.neighbors(h.id, lc);
-                theirs.push_back(q);
-                if (theirs.size() > cap)
+                store.addLink(q, lc, h.id);
+                auto theirs = store.neighbors(h.id, lc);
+                std::vector<std::int64_t> list(theirs.begin(), theirs.end());
+                list.push_back(q);
+                if (list.size() > cap)
                 {
-                    // 以 h 自身为查询点，把它的全部邻居重剪到 cap
                     std::vector<KnnHit> cand;
-                    cand.reserve(theirs.size());
+                    cand.reserve(list.size());
                     const float* hv = store.vector(h.id);
-                    for (const std::int64_t nb : theirs)
+                    for (const std::int64_t nb : list)
                         cand.push_back({nb, evalDistance(metric, store.vector(nb), hv, dims)});
                     const auto kept = selectNeighbors(cand, cap, strategy, pairDist);
-                    theirs.clear();
-                    for (const KnnHit& k : kept) theirs.push_back(k.id);
+                    std::vector<std::int64_t> ids;
+                    ids.reserve(kept.size());
+                    for (const KnnHit& k : kept) ids.push_back(k.id);
+                    store.setLinks(h.id, lc, ids);
+                }
+                else
+                {
+                    store.setLinks(h.id, lc, list);
                 }
             }
-            if (lc == 0) break;
-            
-            ep = found.empty() ? ep : found[0].id;
         }
         return q;
+    }
+
+    std::int64_t insertNode(GraphStore& store, DistanceMetric metric,
+                            const float* vec, std::size_t level,
+                            std::size_t efConstruction, SelectStrategy strategy)
+    {
+        const InsertPlan plan =
+            planInsertNode(store, metric, vec, level, efConstruction);
+        return applyInsertNode(store, metric, vec, plan, strategy);
     }
 
     std::vector<KnnHit> searchKnn(const GraphStore& store,

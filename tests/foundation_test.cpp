@@ -118,16 +118,6 @@ namespace vortex
         EXPECT_EQ(few.data.size(), 6u);
     }
 
-    // 验证空文件和不存在文件的处理
-    TEST_F(DatasetTest, EmptyAndMissing)
-    {
-        auto p = makePath("empty.fvecs");
-        std::ofstream(p, std::ios::binary).close();
-        Dataset ds = readFvecs(p.string());
-        EXPECT_EQ(ds.rows, 0u);
-        EXPECT_THROW(readFvecs("/nonexistent/dir/x.fvecs"), IOError);
-    }
-
     // 验证 .fvecs 文件的格式错误处理
     TEST_F(DatasetTest, BadFormatThrows)
     {

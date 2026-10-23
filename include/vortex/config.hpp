@@ -20,6 +20,7 @@ namespace vortex
         int M = 16;                // 上层每节点最大邻居数（第 0 层为其 2 倍）
         int efConstruction = 200;  // 插入时的搜索束宽
         std::uint32_t seed = 0x9E3779B9u;  // 随机数种子，黄金分割数
+        DistanceMetric metric = DistanceMetric::L2;    // 距离度量
         void validate() const;
     };
 

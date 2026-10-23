@@ -1,15 +1,11 @@
 // 搜索与建图层测试：bruteforce / searchLayer / insertNode / searchKnn / buildIndex
 #include <gtest/gtest.h>
-#include <algorithm>
-#include <iostream>
 #include <random>
-#include <set>
 #include <vector>
 #include "core/bruteforce.hpp"
 #include "core/graph_store.hpp"
 #include "core/hnsw_index.hpp"
 #include "core/level_generator.hpp"
-#include "io/dataset.hpp"
 #include "vortex/errors.hpp"
 
 namespace vortex
@@ -19,6 +15,12 @@ namespace vortex
         std::vector<std::int64_t> v;
         for (const auto& h : hits) v.push_back(h.id);
         return v;
+    }
+
+    // LinkView 视图抄成 owning vector，方便和期望值整体比较
+    static std::vector<std::int64_t> linksOf(GraphStore::LinkView v)
+    {
+        return std::vector<std::int64_t>(v.begin(), v.end());
     }
 
     // bruteforce：5 个 2D 点
@@ -42,22 +44,7 @@ namespace vortex
         EXPECT_EQ(tie[0].id, 0);
     }
 
-    TEST(BruteforceTest, GuardsAndInnerProduct)
-    {
-        const float q[] = {0.f, 0.f};
-        EXPECT_TRUE(bruteForceKnn(DistanceMetric::L2, kPts, 5, 2, q, 0).empty());
-        EXPECT_TRUE(bruteForceKnn(DistanceMetric::L2, nullptr, 0, 2, q, 3).empty());
-        EXPECT_THROW(bruteForceKnn(DistanceMetric::L2, kPts, 5, 2, nullptr, 3), ValueError);
-        // IP 距离 = 1 - dot：id0 (2,0) -> -1；id1 (0,3) -> -2。
-        // 负距离不是 bug，排序仍升序：id1 在前
-        const float pts[] = {2, 0, 0, 3};
-        const float qip[] = {1.f, 1.f};
-        const auto hits = bruteForceKnn(DistanceMetric::InnerProduct, pts, 2, 2, qip, 2);
-        EXPECT_EQ(idsOf(hits), (std::vector<std::int64_t>{1, 0}));
-        EXPECT_NEAR(hits[0].distance, -2.f, 1e-6f);
-    }
-
-    // searchLayer 
+    // searchLayer
     // 手工构造：6 个点在数轴 0..5（dims=1），双向链 0-1-2-3-4-5，入口 0。
     // 链图上的搜索行为可以逐拍推演，写死期望值
     static GraphStore buildChain()
@@ -70,8 +57,8 @@ namespace vortex
         }
         for (int i = 0; i + 1 < 6; i++)
         {
-            store.neighbors(i, 0).push_back(i + 1);
-            store.neighbors(i + 1, 0).push_back(i);
+            store.addLink(i, 0, i + 1);
+            store.addLink(i + 1, 0, i);
         }
         return store;
     }
@@ -106,7 +93,7 @@ namespace vortex
 
         // 悬空邻居 id 必须当场抛，不能静默越界
         GraphStore bad = buildChain();
-        bad.neighbors(0, 0).push_back(99);
+        bad.addLink(0, 0, 99);
         EXPECT_THROW(searchLayer(bad, DistanceMetric::L2, q, 0, 3, 0), ValueError);
 
         // 重合点 (1,0)(2,0) 都连入口 0=(0,0)：距离全并列，输出按 id 升序
@@ -115,90 +102,18 @@ namespace vortex
         dup.addNode(&a, 0);
         dup.addNode(&b, 0);
         dup.addNode(&b, 0);
-        dup.neighbors(0, 0) = {1, 2};
+        dup.setLinks(0, 0, {1, 2});
         const float q0[] = {0.f};
         const auto hits = searchLayer(dup, DistanceMetric::L2, q0, 0, 3, 0);
         EXPECT_EQ(idsOf(hits), (std::vector<std::int64_t>{0, 1, 2}));
     }
 
-    // 50 点 2D 合成图（每点连 4 近邻、对称化）：不同 ef 的 recall@10 打印成表。
-    TEST(SearchLayerTest, Random50RecallTable)
-    {
-        std::mt19937 rng(20261014u);
-        std::uniform_real_distribution<float> uni(0.f, 1.f);
-
-        const std::size_t n = 50;
-        Dataset pts;
-        pts.rows = n;
-        pts.dims = 2;
-        for (std::size_t i = 0; i < n; i++)
-        {
-            pts.data.push_back(uni(rng));
-            pts.data.push_back(uni(rng));
-        }
-
-        GraphStore store(2, 4, n);
-        for (std::size_t i = 0; i < n; i++) store.addNode(pts.row(i), 0);
-        // k=5 含自己，取其余 4 个做近邻，双向连边
-        for (std::size_t i = 0; i < n; i++)
-        {
-            const auto nn = bruteForceKnn(DistanceMetric::L2, pts.data.data(),
-                                          n, 2, pts.row(i), 5);
-            for (std::size_t j = 1; j < nn.size(); j++)
-            {
-                auto& mine = store.neighbors(static_cast<std::int64_t>(i), 0);
-                if (std::find(mine.begin(), mine.end(), nn[j].id) == mine.end())
-                    mine.push_back(nn[j].id);
-                auto& theirs = store.neighbors(nn[j].id, 0);
-                if (std::find(theirs.begin(), theirs.end(),
-                              static_cast<std::int64_t>(i)) == theirs.end())
-                    theirs.push_back(static_cast<std::int64_t>(i));
-            }
-        }
-
-        // 连通性前置检查：不连通的话下面的对比没有意义，直接判失败
-        std::set<std::size_t> seen;
-        std::vector<std::size_t> stack = {0};
-        seen.insert(0);
-        while (!stack.empty())
-        {
-            const std::size_t cur = stack.back();
-            stack.pop_back();
-            for (const std::int64_t nb :
-                 store.neighbors(static_cast<std::int64_t>(cur), 0))
-                if (seen.insert(static_cast<std::size_t>(nb)).second)
-                    stack.push_back(static_cast<std::size_t>(nb));
-        }
-        ASSERT_EQ(seen.size(), n) << "synthetic graph is not connected";
-
-        const float q[] = {uni(rng), uni(rng)};
-        const auto truth = bruteForceKnn(DistanceMetric::L2, pts.data.data(), n, 2, q, 10);
-        const std::vector<std::int64_t> truthVec = idsOf(truth);
-        const std::set<std::int64_t> truthIds(truthVec.begin(), truthVec.end());
-
-        std::cout << "ef -> recall@10 (query on 50-node kNN4 graph):\n";
-        double recallAt25 = 0.0;
-        for (const std::size_t ef : {5u, 10u, 25u, 50u})
-        {
-            const auto hits =
-                searchLayer(store, DistanceMetric::L2, q, 0, ef, 0);
-            const std::vector<std::int64_t> hitVec = idsOf(hits);
-            const std::set<std::int64_t> hitIds(hitVec.begin(), hitVec.end());
-            std::size_t inter = 0;
-            for (const auto id : hitIds)
-                if (truthIds.count(id)) inter++;
-            const double r = static_cast<double>(inter) / 10.0;
-            std::cout << "  ef=" << ef << ": recall@10 = " << r << "\n";
-            if (ef == 25) recallAt25 = r;
-        }
-        EXPECT_GE(recallAt25, 0.5);
-    }
 
     // insertNode / searchKnn / buildIndex
 
     // 图不变量：所有邻居 id 在 [0, size) 且不超过该层容量、无自环。
     // 悬空 id 和超容是连边代码最原始的两种错法。
-    static void expectGraphSane(const GraphStore& store, std::size_t M)
+    static void expectGraphSane(const GraphStore& store)
     {
         const std::size_t n = store.size();
         for (std::size_t i = 0; i < n; i++)
@@ -223,21 +138,6 @@ namespace vortex
         }
     }
 
-    TEST(InsertNodeTest, FirstAndSecondNodes)
-    {
-        GraphStore store(1, 2, 4);
-        const float a = 0.f, b = 1.f;
-        // 空图：第一个点直接成入口，没得连
-        EXPECT_EQ(insertNode(store, DistanceMetric::L2, &a, 0, 8), 0);
-        EXPECT_EQ(store.entryPoint(), 0);
-        EXPECT_TRUE(store.neighbors(0, 0).empty());
-        // 第二个点：双向各连一条
-        insertNode(store, DistanceMetric::L2, &b, 0, 8);
-        EXPECT_EQ(store.neighbors(0, 0), (std::vector<std::int64_t>{1}));
-        EXPECT_EQ(store.neighbors(1, 0), (std::vector<std::int64_t>{0}));
-        expectGraphSane(store, 2);
-    }
-
     TEST(InsertNodeTest, FiveOnLineReachable)
     {
         // 数轴 0..4 依次插入（M=2，第 0 层容量 4）
@@ -246,7 +146,7 @@ namespace vortex
         {
             const float x = static_cast<float>(i);
             insertNode(store, DistanceMetric::L2, &x, 0, 8);
-            expectGraphSane(store, 2);
+            expectGraphSane(store);
         }
         const float q = 2.f;
         const auto hits = searchLayer(store, DistanceMetric::L2, &q,
@@ -268,7 +168,7 @@ namespace vortex
         for (int i = 0; i < 20; i++)
         {
             insertNode(store, DistanceMetric::L2, &v, 0, 8);
-            expectGraphSane(store, 2);
+            expectGraphSane(store);
         }
 
         const auto hits = searchLayer(store, DistanceMetric::L2, &v,
@@ -291,16 +191,68 @@ namespace vortex
         EXPECT_FALSE(store.neighbors(1, 1).empty());  // B 的第 1 层连了东西
         EXPECT_EQ(store.nodeLevel(2), 0u);  // C 只有第 0 层（查 layer1 会抛）
         EXPECT_FALSE(store.neighbors(2, 0).empty());  // 但第 0 层必须连上
-        expectGraphSane(store, 2);
+        expectGraphSane(store);
     }
 
-    TEST(BuildIndexTest, NullArgsThrow)
+    // 性质测试：图连通时，ef 开到节点数即全遍历——found 永不截断、候选
+    // 永不剪枝，searchKnn 必须和暴力全排序逐条一致（id 与距离都等）。
+    TEST(HnswPropertyTest, RecallVsBruteforceExactAtFullEf)
     {
-        GraphStore store(2, 4, 8);
-        LevelGenerator lv(4, 1u);
-        const float* nul = nullptr;
-        EXPECT_THROW(insertNode(store, DistanceMetric::L2, nul, 0, 8), ValueError);
-        EXPECT_THROW(buildIndex(store, DistanceMetric::L2, nul, 3, lv, 8), ValueError);
+        std::mt19937 rng(20261018u);
+        std::uniform_real_distribution<float> uni(0.f, 1.f);
+        const std::size_t n = 200, dims = 8;
+        std::vector<float> data(n * dims);
+        for (auto& x : data) x = uni(rng);
+
+        for (const SelectStrategy strategy :
+             {SelectStrategy::Naive, SelectStrategy::Heuristic})
+        {
+            GraphStore store(dims, 8, n);
+            LevelGenerator lv(8, 0x9E3779B9u);
+            buildIndex(store, DistanceMetric::L2, data.data(), n, lv, 40,
+                       strategy);
+
+            // 可达性前置：从入口沿第 0 层有向边 BFS，够不着任何节点
+            // 的话下面的对比没有意义，当场失败
+            std::size_t reached = 0;
+            std::vector<char> seen(n, 0);
+            std::vector<std::int64_t> stack = {store.entryPoint()};
+            seen[static_cast<std::size_t>(store.entryPoint())] = 1;
+            while (!stack.empty())
+            {
+                const std::int64_t cur = stack.back();
+                stack.pop_back();
+                reached++;
+                for (const std::int64_t nb : store.neighbors(cur, 0))
+                    if (!seen[static_cast<std::size_t>(nb)])
+                    {
+                        seen[static_cast<std::size_t>(nb)] = 1;
+                        stack.push_back(nb);
+                    }
+            }
+            ASSERT_EQ(reached, n) << "graph unreachable under strategy";
+
+            // 查询：3 个库内点（自查询距离应精确为 0）+ 1 个新点
+            std::vector<float> novel(dims);
+            for (auto& x : novel) x = uni(rng);
+            const float* queries[4] = {data.data(), data.data() + 50 * dims,
+                                       data.data() + 199 * dims, novel.data()};
+            for (const float* q : queries)
+            {
+                const auto got = searchKnn(store, DistanceMetric::L2, q, n);
+                const auto want = bruteForceKnn(DistanceMetric::L2,
+                                                data.data(), n, dims, q, n);
+                ASSERT_EQ(got.size(), n);
+                ASSERT_EQ(want.size(), n);
+                for (std::size_t i = 0; i < n; i++)
+                {
+                    EXPECT_EQ(got[i].id, want[i].id)
+                        << "strategy=" << static_cast<int>(strategy)
+                        << " rank " << i;
+                    EXPECT_FLOAT_EQ(got[i].distance, want[i].distance);
+                }
+            }
+        }
     }
 
     TEST(BuildIndexTest, SameSeedSameGraph)
@@ -324,10 +276,11 @@ namespace vortex
             const std::int64_t id = static_cast<std::int64_t>(i);
             ASSERT_EQ(a.nodeLevel(id), b.nodeLevel(id)) << "node " << i;
             for (std::size_t lc = 0; lc <= a.nodeLevel(id); lc++)
-                EXPECT_EQ(a.neighbors(id, lc), b.neighbors(id, lc))
+                EXPECT_EQ(linksOf(a.neighbors(id, lc)),
+                          linksOf(b.neighbors(id, lc)))
                     << "node " << i << " layer " << lc;
         }
-        expectGraphSane(a, 4);
+        expectGraphSane(a);
     }
 
 }

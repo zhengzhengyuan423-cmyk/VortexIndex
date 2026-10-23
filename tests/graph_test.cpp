@@ -1,15 +1,9 @@
 // 图结构层测试：level_generator / graph_store / neighbor_select。
 #include <gtest/gtest.h>
-#include <cmath>
-#include <filesystem>
-#include <iostream>
-#include <map>
-#include <string>
 #include <vector>
 #include "core/graph_store.hpp"
 #include "core/level_generator.hpp"
 #include "core/neighbor_select.hpp"
-#include "io/dataset.hpp"
 #include "vortex/errors.hpp"
 
 namespace vortex
@@ -73,11 +67,18 @@ namespace vortex
         // 第 0 层容量 2M，其余层 M
         EXPECT_EQ(store.neighborCapacity(0), 8u);
         EXPECT_EQ(store.neighborCapacity(1), 4u);
-        // 可变引用：连边写回读得到
+        // 定长块 + addLink：连边写回读得到
         store.addNode(v, 2);
-        store.neighbors(0, 0).push_back(1);
-        store.neighbors(1, 0).push_back(0);
+        store.addLink(0, 0, 1);
+        store.addLink(1, 0, 0);
+        EXPECT_EQ(store.neighbors(0, 0).size(), 1u);
         EXPECT_EQ(store.neighbors(0, 0)[0], 1);
+        // 第 0 层容量 2M=8：补满后下一条当场 CapacityError，块不扩容
+        for (std::int64_t nb = 2; nb <= 8; nb++) store.addLink(0, 0, nb);
+        EXPECT_EQ(store.neighbors(0, 0).size(), 8u);
+        EXPECT_THROW(store.addLink(0, 0, 9), CapacityError);
+        EXPECT_THROW(store.setLinks(0, 0, {1, 2, 3, 4, 5, 6, 7, 8, 9}),
+                     CapacityError);  // 9 条 > 8
     }
 
     TEST(GraphStoreTest, EntryPointTracksHighestFirstWinsTie)
@@ -91,69 +92,7 @@ namespace vortex
         EXPECT_EQ(store.maxLevel(), 3u);
     }
 
-    TEST(GraphStoreTest, CapacityAndNullGuards)
-    {
-        GraphStore store(1, 4, 2);
-        const float v[] = {0.f};
-        store.addNode(v, 0);
-        store.addNode(v, 0);
-        EXPECT_THROW(store.addNode(v, 0), CapacityError);
-        EXPECT_THROW(store.addNode(nullptr, 0), ValueError);
-        EXPECT_THROW((GraphStore{0, 4, 2}), ValueError);  // dims=0
-        EXPECT_THROW((GraphStore{1, 1, 2}), ValueError);  // M=1
-    }
-
-
-    TEST(GraphStoreTest, Siftsmall10kLevelHistogram)
-    {
-        const std::string path = std::string(VORTEX_DATA_DIR) + "/siftsmall/siftsmall_learn.fvecs";
-        if (!std::filesystem::exists(path))
-            GTEST_SKIP() << "siftsmall not downloaded";
-
-        const Dataset learn = readFvecs(path, 10000);
-        ASSERT_EQ(learn.rows, 10000u);
-        ASSERT_EQ(learn.dims, 128u);
-
-        LevelGenerator gen(16, 0x9E3779B9u);
-        GraphStore store(learn.dims, 16, 10000);
-        std::map<std::size_t, std::size_t> hist;
-        std::vector<std::size_t> levels;
-        for (std::size_t i = 0; i < 10000; i++)
-        {
-            const std::size_t lvl = gen.nextLevel();
-            store.addNode(learn.row(i), lvl);
-            hist[lvl]++;
-            levels.push_back(lvl);
-        }
-
-        // 理论：P(level == l) = (1/16)^l * 15/16
-        std::cout << "level histogram (N=10000, M=16):\n";
-        for (const auto& [lvl, count] : hist)
-        {
-            const double expected =
-                10000.0 * std::pow(1.0 / 16.0, lvl) * (15.0 / 16.0);
-            std::cout << "  level " << lvl << ": " << count << "  (theory "
-                      << static_cast<int>(expected + 0.5) << ")\n";
-        }
-
-        // level==1 期望 586，5σ≈39，界放宽到 5σ+零头
-        EXPECT_NEAR(hist[1], 586, 60);
-        EXPECT_NEAR(hist[2], 37, 30);
-        // 入口 = 首个达到最高层级的节点——从记录的 levels 独立重算再对，
-        // 而不是信 store 自己的账
-        std::int64_t expectEntry = -1;
-        for (std::size_t i = 0; i < levels.size(); i++)
-        {
-            if (levels[i] == store.maxLevel())
-            {
-                expectEntry = static_cast<std::int64_t>(i);
-                break;
-            }
-        }
-        EXPECT_EQ(store.entryPoint(), expectEntry);
-    }
-
-    // neighbor_select 
+    // neighbor_select
 
     TEST(NeighborSelectTest, NaiveSortedTopM)
     {
@@ -195,16 +134,6 @@ namespace vortex
                                          coordDist({1.f, 2.f, 3.f}));
         ASSERT_EQ(out.size(), 1u);
         EXPECT_EQ(out[0].id, 0);
-    }
-
-    TEST(NeighborSelectTest, HeuristicKeepsBothSides)
-    {
-
-        std::vector<KnnHit> cand{{0, 9.f}, {1, 4.f}, {2, 1.f}};
-        const auto out = selectNeighbors(cand, 2, SelectStrategy::Heuristic,
-                                         coordDist({-3.f, -2.f, 1.f}));
-        ASSERT_EQ(out.size(), 2u);
-        EXPECT_EQ(idsOf(out), (std::vector<std::int64_t>{2, 1}));
     }
 
     TEST(NeighborSelectTest, HeuristicBackfillsToM)

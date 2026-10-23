@@ -1,0 +1,4 @@
+{"time":"2026-10-19 20:35:12","method":"hnsw","threads":1,"recall_at_k":0.9990,"qps":3981.0,"avg_latency_ms":0.251,"build_seconds":9.1}
+{"time":"2026-10-19 20:52:40","method":"hnsw","threads":1,"recall_at_k":0.9990,"qps":4399.1,"avg_latency_ms":0.227,"build_seconds":12.5}
+{"time":"2026-10-19 21:14:03","method":"hnsw","threads":1,"recall_at_k":1.0000,"qps":3262.1,"avg_latency_ms":0.307,"build_seconds":14.8}
+{"time":"2026-10-19 21:31:26","method":"hnsw","threads":1,"recall_at_k":0.9960,"qps":6386.9,"avg_latency_ms":0.157,"build_seconds":8.9}

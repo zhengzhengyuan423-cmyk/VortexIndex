@@ -1,0 +1,1 @@
+{"time":"2026-10-18 20:10:05","method":"hnsw","threads":1,"recall_at_k":0.9920,"qps":3934.3,"avg_latency_ms":0.254,"build_seconds":2.6}

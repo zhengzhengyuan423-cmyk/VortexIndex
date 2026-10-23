@@ -5,9 +5,12 @@ compile_commands.json
 *.a
 .vscode/
 .idea/
-
-data/
+docs/
 
 # 个人工作文档
 PLAN.md
 DESIGN_LOG.md
+build-rel/
+build-asan/
+build-tsan/
+data/*.tar.gz

@@ -14,6 +14,7 @@ namespace vortex
 
     std::size_t LevelGenerator::nextLevel()
     {
+        std::lock_guard<std::mutex> g(mu_);
         const double u = dist_(rng_);
         return static_cast<std::size_t>(std::floor(-std::log(u) * mL_));
     }

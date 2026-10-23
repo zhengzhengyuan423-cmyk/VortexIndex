@@ -1,0 +1,8 @@
+{"time":"2026-10-23 21:29:53","method":"api","threads":1,"recall_at_k":0.9990,"qps":4647.8,"avg_latency_ms":0.215,"build_seconds":8.7}
+{"time":"2026-10-23 21:30:02","method":"api","threads":2,"recall_at_k":0.9920,"qps":4385.2,"avg_latency_ms":0.228,"build_seconds":8.6}
+{"time":"2026-10-23 21:30:10","method":"api","threads":4,"recall_at_k":0.9920,"qps":4119.8,"avg_latency_ms":0.243,"build_seconds":8.0}
+{"time":"2026-10-23 21:30:19","method":"api","threads":8,"recall_at_k":0.9920,"qps":4670.7,"avg_latency_ms":0.214,"build_seconds":8.0}
+{"time":"2026-10-23 21:30:57","method":"query","threads":1,"recall_at_k":1.0000,"qps":8647.8,"avg_latency_ms":0.116,"build_seconds":4.0}
+{"time":"2026-10-23 21:31:02","method":"query","threads":2,"recall_at_k":1.0000,"qps":17248.6,"avg_latency_ms":0.058,"build_seconds":4.1}
+{"time":"2026-10-23 21:31:06","method":"query","threads":4,"recall_at_k":1.0000,"qps":32180.0,"avg_latency_ms":0.031,"build_seconds":4.2}
+{"time":"2026-10-23 21:31:11","method":"query","threads":8,"recall_at_k":1.0000,"qps":54048.5,"avg_latency_ms":0.019,"build_seconds":4.0}
