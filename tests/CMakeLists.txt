@@ -3,6 +3,8 @@ add_executable(vortex_tests
   graph_test.cpp
   search_test.cpp
   index_test.cpp
+  deletion_test.cpp
+  persistence_test.cpp
   concurrency_test.cpp)
 
 find_package(Threads REQUIRED)

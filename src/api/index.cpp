@@ -1,14 +1,20 @@
 #include "vortex/index.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <numeric>
 #include <random>
 #include <shared_mutex>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "api/slot_book.hpp"
 #include "core/build_pipeline.hpp"
+#include "io/serializer.hpp"
 #include "core/graph_store.hpp"
 #include "core/hnsw_index.hpp"
 #include "core/knn_hit.hpp"
@@ -18,13 +24,15 @@
 
 namespace vortex
 {
+    // 批量删除后的墓碑占比警告阈值：超过就提 compact()，何时压实归业务
+    static const double kCompactWarnRatio = 0.2;
+
     struct Index::Impl
     {
         IndexParams params;
         GraphStore store;              // 内核连续块存储
         LevelGenerator levels;         // 分层抽签，seed 固定即确定性构建
-        std::vector<std::int64_t> slotToExternal;  // 内部槽位 -> 调用方 id
-        std::size_t count = 0;         // 活跃向量数
+        SlotBook book;                 // 槽号<->id 映射 + 墓碑旗（api/slot_book.hpp）
         mutable std::shared_mutex mu;  // 数据主锁：搜索阶段共享、写表阶段独占
 
         explicit Impl(const IndexParams& p)
@@ -58,25 +66,23 @@ namespace vortex
         InsertPlan plan;
         {
             std::shared_lock<std::shared_mutex> guard(mu);
-            if (count >= params.capacity)  throw CapacityError("index is full");
+            if (book.slots() >= params.capacity)  throw CapacityError("index is full");
             const std::size_t level = levels.nextLevel();
             plan = planInsertNode(store, params.metric, data, level, static_cast<std::size_t>(params.efConstruction));
         }
 
         {
             std::unique_lock<std::shared_mutex> guard(mu);
-            if (count >= params.capacity)  throw CapacityError("index is full");
+            if (book.slots() >= params.capacity)  throw CapacityError("index is full");
             stampRow(data, plan, id);
         }
     }
 
+    // 全库唯一落笔口：单线程、并行 commit、compact 重建都走这里登记
     void Index::Impl::stampRow(const float* data, const InsertPlan& plan, std::int64_t id)
     {
         const std::int64_t slot = applyInsertNode(store, params.metric, data, plan, SelectStrategy::Heuristic);
-        if (static_cast<std::size_t>(slot) >= slotToExternal.size())
-            slotToExternal.resize(static_cast<std::size_t>(slot) + 1, -1);
-        slotToExternal[static_cast<std::size_t>(slot)] = id;
-        count++;
+        book.record(static_cast<std::size_t>(slot), id);
     }
 
     void Index::addPoints(const float* data, const std::int64_t* ids, std::size_t rows, std::size_t threads)
@@ -89,7 +95,8 @@ namespace vortex
 
         {
             std::shared_lock<std::shared_mutex> guard(impl_->mu);
-            if (impl_->count + rows > impl_->params.capacity)
+            // 墓碑也占槽：删而不压不会腾出容量，compact() 才还
+            if (impl_->book.slots() + rows > impl_->params.capacity)
                 throw CapacityError("index is full");
         }
         
@@ -219,9 +226,10 @@ namespace vortex
         out.reserve(static_cast<std::size_t>(k));
         for (const KnnHit& h : hits)
         {
-            if (static_cast<std::size_t>(h.id) >= impl_->slotToExternal.size())
-                continue;  
-            const std::int64_t extId = impl_->slotToExternal[static_cast<std::size_t>(h.id)];
+            // 墓碑照常参与内核路由，只在结果映射这层被扣下
+            if (!impl_->book.live(static_cast<std::size_t>(h.id)))
+                continue;
+            const std::int64_t extId = impl_->book.externalId(static_cast<std::size_t>(h.id));
             if (filter && !filter(extId)) continue;  // post-filter
             out.push_back(SearchResult{extId, h.distance});
             if (out.size() == static_cast<std::size_t>(k)) break;
@@ -231,18 +239,114 @@ namespace vortex
 
     std::size_t Index::size() const
     {
-        // count 由写线程在独占锁内修改，读要共享锁
+        // 台账由写线程在独占锁内改动，读要共享锁
         std::shared_lock<std::shared_mutex> guard(impl_->mu);
-        return impl_->count;
+        return impl_->book.liveCount();
     }
 
-    std::size_t Index::deletedCount() const { return 0; }
-
-    void Index::save(const std::string&) const
+    std::size_t Index::deletedCount() const
     {
-        throw NotImplementedError("save");
+        std::shared_lock<std::shared_mutex> guard(impl_->mu);
+        return impl_->book.tombstones();
     }
 
-    Index Index::load(const std::string&) { throw NotImplementedError("load"); }
+    std::size_t Index::removePoint(std::int64_t id)
+    {
+        std::unique_lock<std::shared_mutex> guard(impl_->mu);
+        return impl_->book.removeId(id);
+    }
+
+    std::size_t Index::removePoint(const std::int64_t* ids, std::size_t rows)
+    {
+        if (ids == nullptr) throw ValueError("ids must not be null");
+        std::size_t flipped = 0;
+        {
+            std::unique_lock<std::shared_mutex> guard(impl_->mu);
+            for (std::size_t i = 0; i < rows; i++)
+                flipped += impl_->book.removeId(ids[i]);
+        }
+        {
+            // 批删收尾自查：单删不叫，一次一条就报警是狼来了
+            std::shared_lock<std::shared_mutex> guard(impl_->mu);
+            if (impl_->book.crowded(kCompactWarnRatio))
+                std::fprintf(stderr,
+                             "vortex: warning: tombstones %zu/%zu over %.0f%%, "
+                             "consider compact()\n",
+                             impl_->book.tombstones(), impl_->book.slots(),
+                             kCompactWarnRatio * 100.0);
+        }
+        return flipped;
+    }
+
+    // 压实：按槽号原序把活点重灌成新图。外部 id 不变
+    void Index::compact()
+    {
+        std::unique_lock<std::shared_mutex> guard(impl_->mu);
+        if (impl_->book.tombstones() == 0) return;  // 无墓碑空操作，不抖图
+
+        // 向量必须拷出来：下面一换 store，旧 arena 当场释放，指针全成悬垂
+        struct LivePoint 
+        { 
+            std::vector<float> vec; 
+            std::int64_t id; 
+        };
+
+        std::vector<LivePoint> live;
+        live.reserve(impl_->book.liveCount());
+        const std::size_t dims = impl_->params.dims;
+        for (std::size_t s = 0; s < impl_->store.size(); s++)
+        {
+            if (!impl_->book.live(s)) continue;
+            const float* v = impl_->store.vector(static_cast<std::int64_t>(s));
+            live.push_back(LivePoint{std::vector<float>(v, v + dims),
+                                     impl_->book.externalId(s)});
+        }
+
+
+        impl_->store = GraphStore(dims, static_cast<std::size_t>(impl_->params.M), impl_->params.capacity);
+        impl_->book.reset();
+        LevelGenerator gen(static_cast<std::size_t>(impl_->params.M), impl_->params.seed);
+        const std::size_t efC = static_cast<std::size_t>(impl_->params.efConstruction);
+        for (const LivePoint& lp : live)
+        {
+            const InsertPlan plan = planInsertNode(impl_->store, impl_->params.metric,
+                                                   lp.vec.data(), gen.nextLevel(), efC);
+            impl_->stampRow(lp.vec.data(), plan, lp.id);
+        }
+    }
+
+    // 抄盘成文件，先写 .tmp，全部落盘后 rename 原子换正主
+    void Index::save(const std::string& path) const
+    {
+        std::shared_lock<std::shared_mutex> guard(impl_->mu);
+        const std::string tmp = path + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) throw IOError("save");
+            serializeIndex(out, impl_->store, impl_->book, impl_->params);
+            out.close();
+            if (!out) throw IOError("save");  // 收尾写失败只在 close 后浮现
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (ec)
+        {
+            std::error_code ign;
+            std::filesystem::remove(tmp, ign);
+            throw IOError("save");
+        }
+    }
+
+
+    Index Index::load(const std::string& path)
+    {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) throw IOError("load");
+        LoadedFile f = deserializeIndex(in);
+        Index idx(f.params);  // 构造再过一遍 validate
+        idx.impl_->store = std::move(f.store);
+        idx.impl_->book = std::move(f.book);
+        return idx;
+    }
 
 }

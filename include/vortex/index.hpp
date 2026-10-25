@@ -44,7 +44,16 @@ namespace vortex
         std::vector<SearchResult> searchKnn
         (const float* query, int k, int ef, const IdFilter& filter = IdFilter{}) const;
 
-        std::size_t size() const;          // 活跃向量数
+        // 墓碑删除：把该 id 名下全部槽位一次翻旗，返回删掉的槽数。
+        std::size_t removePoint(std::int64_t id);
+
+        // 批量重载：一把独占锁循环删 rows 条，返回总实删槽数，
+        std::size_t removePoint(const std::int64_t* ids, std::size_t rows);
+
+        // 压实：按槽号升序把活点重建成新图，外部 id 不变
+        void compact();
+
+        std::size_t size() const;          // 活跃向量数（不含墓碑）
         std::size_t deletedCount() const;  // 墓碑槽位数
 
         void save(const std::string& path) const;    // 保存到磁盘
