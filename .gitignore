@@ -13,4 +13,5 @@ DESIGN_LOG.md
 build-rel/
 build-asan/
 build-tsan/
+.smoke_tmp/
 data/*.tar.gz

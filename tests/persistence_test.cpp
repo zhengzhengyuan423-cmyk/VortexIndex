@@ -212,4 +212,22 @@ namespace vortex
         for (std::size_t q = 0; q < before.size(); q++) EXPECT_EQ(after[q], before[q]);
     }
 
+    // 8. 确定性验收：同 seed 同数据独立建两次图 → save 产物字节全等。
+    // 边界写死：保证只属于串行构建（threads=1）。并行建图的落笔顺序跟着
+    // 线程完成顺序走，跨运行逐位不可复现，对它只能
+    // 要求质量区间，不能要求文件哈希
+    TEST(PersistenceTest, IndependentBuildsByteIdentical)
+    {
+        const CleanFile cfA{tmpPath("detA")};
+        const CleanFile cfB{tmpPath("detB")};
+        const std::size_t dims = 3, n = 50;
+        const auto pts = makePoints(n, dims, 81u);
+        Index a(persistParams(dims, 70)), b(persistParams(dims, 70));
+        fill(a, pts, n);
+        fill(b, pts, n);
+        a.save(cfA.path);
+        b.save(cfB.path);
+        EXPECT_EQ(readBytes(cfA.path), readBytes(cfB.path));
+    }
+
 }

@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+# vortex 静态库的锁后端是 pthread；使用方 find_package(vortex) 时自动带上
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/vortexTargets.cmake")
