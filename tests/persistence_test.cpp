@@ -82,7 +82,7 @@ namespace vortex
         return all;
     }
 
-    // 1. 往返逐位一致：load 后同批查询与 save 前相等（PLAN D15 验收原文）
+    // 1. 往返逐位一致：load 后同批查询与 save 前相等
     TEST(PersistenceTest, RoundTripIdentical)
     {
         const CleanFile cf{tmpPath("roundtrip")};
@@ -101,7 +101,7 @@ namespace vortex
         for (std::size_t q = 0; q < before.size(); q++) EXPECT_EQ(after[q], before[q]);
     }
 
-    // 2. 字节稳定：load→再 save，两文件逐字节相同（格式不含任何不稳定量）
+    // 2. 字节稳定：load→再 save，两文件逐字节相同
     TEST(PersistenceTest, SecondSaveByteIdentical)
     {
         const CleanFile cf1{tmpPath("stable1")};
@@ -116,8 +116,7 @@ namespace vortex
         EXPECT_EQ(readBytes(cf1.path), readBytes(cf2.path));
     }
 
-    // 3. 残缺与改版必拒：砍短、砍头、version 翻掉都要抛。
-    // 格式减重后没有校验和，这三刀全靠 magic/version/边界校验挡
+    // 3. 残缺与改版必拒
     TEST(PersistenceTest, TruncatedAndWrongVersionRejected)
     {
         const CleanFile cf{tmpPath("bad")};
@@ -142,7 +141,7 @@ namespace vortex
         EXPECT_THROW(Index::load(cf.path), IOError);
     }
 
-    // 5. 墓碑随档走：删一半→save→load，计数、隐藏、容量口径三项全对
+    // 5. 墓碑随档走：删一半→save→load
     TEST(PersistenceTest, TombstoneRoundTrip)
     {
         const CleanFile cf{tmpPath("tomb")};

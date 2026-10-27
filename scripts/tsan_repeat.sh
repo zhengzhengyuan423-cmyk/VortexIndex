@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# TSan 并发用例复读：跑 N 轮 ParallelBuildTest+RwStressTest，任何一轮红就停并报轮号。
-# 用法：bash scripts/tsan_repeat.sh [build-tsan 路径] [轮数]
-# setarch -R 关 ASLR：本机 gcc 11.4 的 TSan 影子内存区和高位随机 mmap 撞车，
-# 不开会死在 "unexpected memory mapping"——这是编译器运行时与内核布局的事，
-# 不是被测代码的数据竞争（环境坑记 QA 当日条目）
+
 set -uo pipefail
 BUILD="${1:-build-tsan}"
 ROUNDS="${2:-30}"

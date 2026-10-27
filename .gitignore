@@ -15,3 +15,8 @@ build-asan/
 build-tsan/
 .smoke_tmp/
 data/*.tar.gz
+third_party/*.tar.gz
+third_party/hnswlib*/
+compare/hnsw_probe
+compare/mt_query
+compare/delread_probe

@@ -18,7 +18,7 @@ namespace vortex
         p.dims = 2;
         p.capacity = cap;
         p.M = 8;
-        p.efConstruction = 200;  // 拉高让串行下图接近连通；并发下仍不保证（QA18）
+        p.efConstruction = 200;  // 拉高让串行下图接近连通；并发下仍不保证
         return p;
     }
 
@@ -63,7 +63,7 @@ namespace vortex
         }
     }
 
-    // 1. 并发写（D11）：4 线程各逐条灌 250 个不相交 id，顺序不定、总量定
+    // 1. 并发写：4 线程各逐条灌 250 个不相交 id，顺序不定、总量定
     TEST(RwStressTest, MultiWriterDisjointIds)
     {
         Index idx(concParams(1000));
@@ -72,7 +72,7 @@ namespace vortex
             writers.emplace_back([&idx, t]
             {
                 // y=x 一条线、各线程领一段连续编号；刻意避开"4 堆各一小段线"：
-                // 病态到达次序下偶发死角，断连就分不清是谁的锅（QA18）
+                // 病态到达次序下偶发死角，断连就分不清是谁的锅
                 for (int i = 0; i < 250; i++)
                 {
                     const float x = static_cast<float>(t * 250 + i);

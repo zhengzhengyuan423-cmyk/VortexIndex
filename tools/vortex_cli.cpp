@@ -1,4 +1,4 @@
-// vortex-cli（D17）：build / query / bench 三个子命令的单文件命令行前台。
+// vortex-cli：build / query / bench 三个子命令的单文件命令行前台。
 // 无交互模式、无进度条：每条命令一口气跑完，正常走 stdout，报错走 stderr 退出码 1。
 // 用法：
 //   vortex-cli build <数据集目录> <输出.bin> [threads] [M] [efC]

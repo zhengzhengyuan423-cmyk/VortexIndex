@@ -1,5 +1,3 @@
-// 三行级消费者：证明 find_package(vortex) + 一个 link 就能用，
-// 不碰仓库里任何源码。跑对与否由 smoke_consumer.sh 断言（首个命中 id=11）
 #include <cstdio>
 #include <vector>
 #include "vortex/index.hpp"

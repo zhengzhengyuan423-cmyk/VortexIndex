@@ -60,7 +60,7 @@ int main(int argc, char** argv)
     };
     const auto begin = std::chrono::steady_clock::now();
     std::vector<std::thread> pool;
-    for (std::size_t t = 0; t < threads; t++) pool.emplace_back(reader);  // reader 无参数、不捕获循环变量（QA30）
+    for (std::size_t t = 0; t < threads; t++) pool.emplace_back(reader);  // reader 无参数、不捕获循环变量
     for (auto& th : pool) th.join();
     const double secs = std::chrono::duration<double>(
                             std::chrono::steady_clock::now() - begin).count();
