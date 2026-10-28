@@ -1,8 +1,0 @@
-BasedOnStyle: Google
-IndentWidth: 4
-AccessModifierOffset: 0
-BreakBeforeBraces: Allman
-NamespaceIndentation: All
-IncludeBlocks: Preserve
-FixNamespaceComments: false
-
