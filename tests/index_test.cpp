@@ -1,4 +1,6 @@
 // 对外 API（Index 类）的边界测试
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <vector>
 #include "vortex/errors.hpp"
@@ -143,6 +145,33 @@ namespace vortex
         EXPECT_EQ(r.size(), 2u);
         // 已知限制：searchKnn 没做零向量预检，内核 evalDistance 照抛
         EXPECT_THROW(idx.searchKnn(z, 1, 10), ValueError);
+    }
+
+    // 10. 文件灌入重载：fvecs 整读、外部 id=行号；dims 不符 ValueError 且一槽不占
+    TEST(IndexTest, AddPointsFromFvecsFile)
+    {
+        const std::string path = "vortex_addfile.fvecs";
+        {
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            const std::int32_t dims = 2;
+            const float vals[6] = {1.f, 0.f, 0.f, 1.f, 2.f, 0.f};
+            for (int r = 0; r < 3; r++)
+            {
+                out.write(reinterpret_cast<const char*>(&dims), sizeof(dims));
+                out.write(reinterpret_cast<const char*>(&vals[r * 2]), 2 * sizeof(float));
+            }
+        }
+        Index idx(makeParams(2, 10, 4));
+        idx.addPoints(path);
+        EXPECT_EQ(idx.size(), 3u);
+        const float q[] = {0.9f, 0.1f};
+        const auto r = idx.searchKnn(q, 1, 10);
+        ASSERT_EQ(r.size(), 1u);
+        EXPECT_EQ(r[0].id, 0);  // id 0 就是文件第 0 行
+        Index bad(makeParams(3, 10));
+        EXPECT_THROW(bad.addPoints(path), ValueError);
+        EXPECT_EQ(bad.size(), 0u);
+        std::filesystem::remove(path);
     }
 
 }

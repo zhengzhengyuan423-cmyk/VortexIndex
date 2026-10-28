@@ -17,7 +17,6 @@ namespace vortex
         float distance;
     };
 
-    // 测试用
     inline bool operator==(const SearchResult& a, const SearchResult& b)
     {
         return a.id == b.id && a.distance == b.distance;
@@ -39,6 +38,10 @@ namespace vortex
 
         // 插入点，返回 id
         void addPoints(const float* data, const std::int64_t* ids, std::size_t rows, std::size_t threads = 1);
+
+        // 文件灌入重载：读一个 fvecs 文件整批插入，外部 id = 文件行号（0 起）。
+        // 文件 dims 与索引不符抛 ValueError；文件读不到抛 IOError
+        void addPoints(const std::string& fvecsPath, std::size_t threads = 1);
 
         // 查询 k 个最近邻，返回结果按距离升序排列。
         std::vector<SearchResult> searchKnn

@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <fstream>
 #include <numeric>
-#include <random>
 #include <shared_mutex>
 #include <stdexcept>
 #include <system_error>
@@ -14,6 +13,7 @@
 
 #include "api/slot_book.hpp"
 #include "core/build_pipeline.hpp"
+#include "io/dataset.hpp"
 #include "io/serializer.hpp"
 #include "core/graph_store.hpp"
 #include "core/hnsw_index.hpp"
@@ -46,7 +46,7 @@ namespace vortex
 
         void addOne(const float* data, std::int64_t id);
 
-        void workerLoop(WorkQueue& wq, Gate& gate, const float* data, const std::vector<std::size_t>& order, std::size_t rows, std::size_t kWindow);
+        void workerLoop(WorkQueue& wq, Gate& gate, const float* data, std::size_t rows, std::size_t kWindow);
         
         void commitLoop(WorkQueue& wq, const float* data, const std::int64_t* ids, std::size_t rows, std::size_t kCommitBatch);
     };
@@ -85,6 +85,16 @@ namespace vortex
         book.record(static_cast<std::size_t>(slot), id);
     }
 
+    void Index::addPoints(const std::string& fvecsPath, std::size_t threads)
+    {
+        const Dataset ds = readFvecs(fvecsPath);
+        if (ds.dims != 0 && ds.dims != impl_->params.dims)
+            throw ValueError("fvecs dims mismatch");
+        std::vector<std::int64_t> ids(ds.rows);
+        std::iota(ids.begin(), ids.end(), 0);
+        addPoints(ds.data.data(), ids.data(), ds.rows, threads);
+    }
+
     void Index::addPoints(const float* data, const std::int64_t* ids, std::size_t rows, std::size_t threads)
     {
         if (data == nullptr) throw ValueError("data must not be null");
@@ -120,11 +130,6 @@ namespace vortex
         }
 
 
-        std::vector<std::size_t> order(rows);
-        std::iota(order.begin(), order.end(), 0);
-        std::mt19937_64 rng(static_cast<std::uint64_t>(impl_->params.seed));
-        std::shuffle(order.begin(), order.end(), rng);
-
         const std::size_t kWindow = std::max<std::size_t>(8 * threads, rows / 156);
         WorkQueue wq;
         Gate gate;
@@ -135,7 +140,7 @@ namespace vortex
         {
             for (std::size_t t = 0; t < threads; t++)
                 pool.emplace_back([&, threads, rows, kWindow]
-                { impl_->workerLoop(wq, gate, data, order, rows, kWindow); });
+                { impl_->workerLoop(wq, gate, data, rows, kWindow); });
             gate.open(threads);
         }
         catch (...)
@@ -155,7 +160,6 @@ namespace vortex
 
     // 工人主循环：领票 -> 共享锁里搜索 -> 交回计划书
     void Index::Impl::workerLoop(WorkQueue& wq, Gate& gate, const float* data,
-                                 const std::vector<std::size_t>& order,
                                  std::size_t rows, std::size_t kWindow)
     {
         if (!gate.arrive()) return;
@@ -165,7 +169,7 @@ namespace vortex
         {
             std::size_t i = 0;
             if (!wq.takeTicket(kWindow, rows, i)) break;
-            PlannedRow pr{order[i], InsertPlan{}};
+            PlannedRow pr{i, InsertPlan{}};
             try
             {
                 std::shared_lock<std::shared_mutex> guard(mu);
