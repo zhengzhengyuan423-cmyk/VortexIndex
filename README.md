@@ -2,7 +2,7 @@
 
 C++17 实现的 HNSW 近似最近邻检索库。技术栈：C++17 / CMake / pthread。
 
-核心指标（siftsmall 10k×128 维，M=16，efConstruction=200，k=10，ef=100，AMD Ryzen 7 8845H）：recall@10 = 0.9990；串行查询约 4000 QPS，8 线程并发查询 21k–26k QPS；51 个测试全部通过；串行建图同 seed 产物字节级一致。
+核心指标（siftsmall 10k×128 维，M=16，efConstruction=200，k=10，ef=100，AMD Ryzen 7 8845H）：recall@10 = 0.9990；串行查询约 4000 QPS，8 线程并发查询 21k–26k QPS；50 个测试全部通过；串行建图同 seed 产物字节级一致。
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -120,6 +120,20 @@ compare/          与 hnswlib v0.8.0 的对比（基准程序 + 运行脚本 + �
 ## 代码来源与基准选型
 
 本库按 HNSW 论文（[原文](https://arxiv.org/pdf/1603.09320)）独立实现——分层插入、单层候选扩展、启发式邻居选择均按论文描述编写，性能对照选 hnswlib v0.8.0，数据与差距归因见 [compare/RESULTS.md](compare/RESULTS.md)；hnswlib 只出现在 `compare/` 目录，库本体与发布包不链接它。
+
+## 复杂度分析
+
+记号：n 库内向量条数，d 维度，M 每点邻居数上限（层 0 为 2M），ef 查询束宽，efC 插入束宽（efConstruction）。计数口径：距离函数调用次数，单次单价 d 次乘加。
+
+| 项 | 复杂度 |
+|---|---|
+| 查询 | O(M·d·(ef + log n)) |
+| 单点插入 | O(M·d·(efC + log n)) |
+| 建库 | O(n·M·d·(efC + log n)) |
+| 空间 | O(n·(M+d)) |
+
+**论文的论述**：查询 O(log n)，建库 O(n log n)，论文中把M，d，ef，efC，全部归为常数，文中说达到此量级的前提是出度不随 n 涨（M为常数）、固定召回所需 ef 随 n 饱和（ef为常数），前提失效时退化为 O(n·d)，ef 开到 n 即等价暴力。但这两个前提并不能严格证明，只是大量实验得出，其实这个算法的核心也是如此，RNG（剪枝方式）本身就不是“最优图”，但我们依然用它，所以理解什么是启发式至关重要！
+
 
 ## 已知局限（v0.1）
 

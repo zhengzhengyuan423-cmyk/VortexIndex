@@ -20,3 +20,4 @@ third_party/hnswlib*/
 compare/hnsw_probe
 compare/mt_query
 compare/delread_probe
+.clang-format
